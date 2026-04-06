@@ -1,5 +1,3 @@
-// Copy this code into your Cloudflare Worker script
-
 export default {
   async fetch(request, env) {
     const corsHeaders = {
@@ -9,22 +7,49 @@ export default {
       'Content-Type': 'application/json'
     };
 
-    // Handle CORS preflight requests
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders });
     }
 
-    const apiKey = env.OPENAI_API_KEY; // Make sure to name your secret OPENAI_API_KEY in the Cloudflare Workers dashboard
-    const apiUrl = 'https://api.openai.com/v1/chat/completions';
-    const userInput = await request.json();
+    if (request.method !== 'POST') {
+      return new Response(
+        JSON.stringify({ error: 'Use POST for chat requests.' }),
+        { status: 405, headers: corsHeaders }
+      );
+    }
+
+    const apiKey = env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return new Response(
+        JSON.stringify({ error: 'Missing OPENAI_API_KEY secret in Cloudflare Worker.' }),
+        { status: 500, headers: corsHeaders }
+      );
+    }
+
+    let payload;
+    try {
+      payload = await request.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ error: 'Request body must be valid JSON.' }),
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
+    if (!Array.isArray(payload.messages) || payload.messages.length === 0) {
+      return new Response(
+        JSON.stringify({ error: 'Request body must include a non-empty messages array.' }),
+        { status: 400, headers: corsHeaders }
+      );
+    }
 
     const requestBody = {
-      model: 'gpt-4o',
-      messages: userInput.messages,
-      max_completion_tokens: 300,
+      model: 'gpt-4o-mini',
+      messages: payload.messages,
+      max_completion_tokens: 350
     };
 
-    const response = await fetch(apiUrl, {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -35,6 +60,22 @@ export default {
 
     const data = await response.json();
 
-    return new Response(JSON.stringify(data), { headers: corsHeaders });
+    if (!response.ok) {
+      return new Response(
+        JSON.stringify({
+          error: data.error?.message || 'OpenAI request failed.',
+          details: data
+        }),
+        {
+          status: response.status,
+          headers: corsHeaders
+        }
+      );
+    }
+
+    return new Response(JSON.stringify(data), {
+      status: 200,
+      headers: corsHeaders
+    });
   }
 };
